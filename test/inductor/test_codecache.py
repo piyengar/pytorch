@@ -83,6 +83,7 @@ from torch.testing._internal.common_utils import (
     IS_FBCODE,
     IS_SANDCASTLE,
     parametrize,
+    skipIfXpu,
     TEST_WITH_ROCM,
 )
 from torch.testing._internal.inductor_utils import (
@@ -1032,6 +1033,7 @@ class TestFxGraphCache(TestCase):
             self.assertEqual(counters["inductor"]["fxgraph_cache_hit"], 1)
             self.assertEqual(counters["inductor"]["fxgraph_lookup_write_file"], 1)
 
+    @skipIfXpu(msg="torch-xpu-ops/issues/4185")
     @requires_gpu_and_triton
     @config.patch(
         {

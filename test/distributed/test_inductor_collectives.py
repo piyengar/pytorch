@@ -2998,6 +2998,38 @@ class TestSyncDecisionCrossRanks(MultiProcessTestCase):
         )
 
     @skip_if_lt_x_gpu(2)
+    def test_sync_cache_decision_cross_ranks(self):
+        # A cache hit on one rank and a miss on another leaves only the missing rank
+        # inside _sync_decision_cross_ranks, which desyncs the process group. The hit
+        # must be discarded unless every rank hit.
+        from torch._dynamo.utils import counters
+        from torch._functorch._aot_autograd.autograd_cache import (
+            sync_cache_decision_cross_ranks,
+        )
+
+        self._init_process_group()
+
+        def compiled_fn():
+            pass
+
+        with torch._functorch.config.patch(_sync_cache_decision_cross_ranks=True):
+            self.assertIs(sync_cache_decision_cross_ranks(compiled_fn), compiled_fn)
+            self.assertIsNone(sync_cache_decision_cross_ranks(None))
+
+            counters.clear()
+            # Rank 0 hits, rank 1 misses.
+            local = compiled_fn if self.rank == 0 else None
+            self.assertIsNone(sync_cache_decision_cross_ranks(local))
+            self.assertEqual(
+                counters["aot_autograd"]["autograd_cache_cross_rank_miss"],
+                1 if self.rank == 0 else 0,
+            )
+
+        # Disabled by default, so a lone hit survives and no collective is issued.
+        local = compiled_fn if self.rank == 0 else None
+        self.assertIs(sync_cache_decision_cross_ranks(local), local)
+
+    @skip_if_lt_x_gpu(2)
     def test_align_runtime_estimations_across_all_distributed_ranks(self):
         from torch._inductor.ir import ExternKernel
         from torch._inductor.scheduler import (

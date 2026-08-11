@@ -40,6 +40,7 @@ from ._aot_autograd.autograd_cache import (
     AOTAutogradCache,
     should_use_local_autograd_cache,
     should_use_remote_autograd_cache,
+    sync_cache_decision_cross_ranks,
 )
 from ._aot_autograd.collect_metadata_analysis import (
     run_functionalized_fw_and_collect_metadata,
@@ -1226,6 +1227,10 @@ def aot_module_simplified(
                     act_input_paths,
                     compile_region_name=compile_region_name,
                 )
+
+        # Sync the cache decision cross ranks to ensure uniform decisions, and the hits
+        # are discarded unless all ranks hit.
+        compiled_fn = sync_cache_decision_cross_ranks(compiled_fn)
 
         if compiled_fn is None:
             if (

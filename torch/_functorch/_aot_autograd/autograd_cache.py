@@ -143,6 +143,63 @@ def should_bundle_autograd_cache() -> bool:
     return config.bundled_autograd_cache or torch._dynamo.config.caching_precompile
 
 
+def sync_cache_decision_cross_ranks(
+    compiled_fn: Callable[..., Any] | None,
+) -> Callable[..., Any] | None:
+    """
+    Drop a local AOTAutogradCache hit unless every rank hit as well.
+
+    Compilation itself issues collectives (see config._sync_decision_cross_ranks and the
+    inductor pass that reorders collectives), and only the ranks that actually compile
+    reach them, so the hit/miss decision has to be unanimous. Every rank must call this,
+    including ranks that never consulted the cache.
+
+    The outcome is synchronized rather than the cache key: a key only says which entries
+    are candidates, while the hit is decided afterwards by evaluating each candidate's
+    dynamic shape guards against rank local hints, which can diverge for equal keys.
+    """
+    if not config._sync_cache_decision_cross_ranks:
+        return compiled_fn
+
+    from torch._dynamo.distributed import get_compile_sync_pg
+
+    dist = torch.distributed
+    if not (dist.is_available() and dist.is_initialized()):
+        return compiled_fn
+    pg = get_compile_sync_pg()
+    if pg is None or pg.size() < 2:
+        return compiled_fn
+
+    from torch._subclasses.fake_tensor import unset_fake_temporarily
+    from torch.utils._mode_utils import no_dispatch
+
+    local_hit = compiled_fn is not None
+
+    with no_dispatch(), unset_fake_temporarily():
+        decision = torch.tensor(
+            [local_hit],
+            dtype=torch.int32,
+            device=dist.distributed_c10d._get_object_coll_device(pg),
+        )
+        dist.all_reduce(decision, op=dist.ReduceOp.MIN, group=pg)
+        all_ranks_hit = bool(decision.item())
+
+    if all_ranks_hit:
+        return compiled_fn
+
+    # The collective only carries whether every rank hit, so each rank reports its
+    # own decision here: grep for local_hit=False to find the ranks that missed.
+    log.info(
+        "AOTAutograd cache cross rank miss: rank=%d local_hit=%s",
+        dist.get_rank(),
+        local_hit,
+    )
+
+    if local_hit:
+        counters["aot_autograd"]["autograd_cache_cross_rank_miss"] += 1
+    return None
+
+
 def check_node_safe(node: Node) -> None:
     """
     Checks that the node only uses supported operators. We are starting with very

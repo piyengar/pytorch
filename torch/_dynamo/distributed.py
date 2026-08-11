@@ -21,6 +21,7 @@ from . import config
 
 _COMPILE_PG: dist.ProcessGroup | None = None
 _GUARD_PG: dist.ProcessGroup | None = None
+_COMPILE_SYNC_PG: dist.ProcessGroup | None = None
 
 
 def get_compile_pg() -> dist.ProcessGroup | None:
@@ -54,5 +55,31 @@ def get_guard_pg() -> dist.ProcessGroup | None:
                 raise AssertionError("Guard process group must include all ranks")
             _GUARD_PG = guard_pg
         return _GUARD_PG
+
+    return None
+
+
+# NB: Like get_guard_pg, this is only called when the caller explicitly asked for
+# compile time synchronization.
+def get_compile_sync_pg() -> dist.ProcessGroup | None:
+    """
+    Process group for collectives issued from inside the compiler itself, e.g. the
+    partitioner's cross rank decision sync.
+
+    These must not share a process group with the model's runtime collectives: ranks
+    reach a given compile at different times, so a rank that has already resumed
+    execution can otherwise match one of its runtime ops against another rank's
+    compile time op. We thus choose gloo as the backend. Gloo keeps the traffic off
+    the accelerator as well, so a compile time collective can't interleave with
+    an in flight NCCL op.
+    """
+    if dist.is_available() and dist.is_initialized():
+        global _COMPILE_SYNC_PG
+        if _COMPILE_SYNC_PG is None:
+            _COMPILE_SYNC_PG = dist.distributed_c10d._new_group_with_tag(
+                backend="gloo" if dist.is_gloo_available() else None,
+                pg_tag="pt2_compile_sync_pg",
+            )
+        return _COMPILE_SYNC_PG
 
     return None

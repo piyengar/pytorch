@@ -1226,6 +1226,8 @@ def filter_len(row):
     "DataLoader tests hang in ASAN, see: https://github.com/pytorch/pytorch/issues/66223",
 )
 class TestDataLoader(TestCase):
+    hw_classification = HardwareClassification.GENERIC
+
     def setUp(self):
         super().setUp()
         self.data = torch.randn(100, 2, 3, 5)
@@ -3267,6 +3269,8 @@ class DummyDataset(torch.utils.data.Dataset):
     "fork is not supported. Dying (set die_after_fork=0 to override)",
 )
 class TestDataLoaderPersistentWorkers(TestDataLoader):
+    hw_classification = HardwareClassification.GENERIC
+
     def setUp(self):
         super().setUp()
         self.persistent_workers = True
@@ -3501,6 +3505,10 @@ class TestDataLoaderCUDA(TestCase):
         self.dataset = TensorDataset(self.data, self.labels)
 
     def _get_data_loader(self, dataset, **kwargs):
+        persistent_workers = kwargs.get("persistent_workers", self.persistent_workers)
+        if persistent_workers and kwargs.get("num_workers", 0) == 0:
+            persistent_workers = False
+        kwargs["persistent_workers"] = persistent_workers
         return DataLoader(dataset, **kwargs)
 
     @unittest.skipIf(not TEST_CUDA_IPC, "CUDA IPC not available")
@@ -3621,6 +3629,14 @@ class TestDataLoaderCUDA(TestCase):
     @skipIfNoDill
     def test_multiprocessing_iterdatapipe_with_dill(self):
         self._test_multiprocessing_iterdatapipe(with_dill=True)
+
+
+class TestDataLoaderCUDAPersistentWorkers(TestDataLoaderCUDA):
+    hw_classification = HardwareClassification.CUDA
+
+    def setUp(self):
+        super().setUp()
+        self.persistent_workers = True
 
 
 class NamedTupleDataset(Dataset):

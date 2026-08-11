@@ -3,11 +3,7 @@ import unittest
 
 from torch._inductor import config
 from torch._inductor.test_case import run_tests
-from torch.testing._internal.common_device_type import (
-    instantiate_device_type_tests,
-    skip,
-    skipOps,
-)
+from torch.testing._internal.common_device_type import instantiate_device_type_tests
 from torch.testing._internal.inductor_utils import HAS_CPU, TRITON_HAS_CPU
 
 
@@ -69,25 +65,30 @@ if HAS_CPU and TRITON_HAS_CPU:
             unittest.skip("Triton CPU: slow test")(getattr(CpuTritonTests, name)),
         )
 
-    class TestInductorOpInfoTriton(test_torchinductor_opinfo.InductorOpInfoTemplate):
+    class TestInductorOpInfoTriton(
+        test_torchinductor_opinfo.InductorOpInfoTemplate,
+        test_torchinductor.TestCase,
+    ):
         # Start Triton CPU OpInfo coverage with index_add only. Other ops will
         # be enabled over time
-        test_comprehensive = config.patch(
-            {
-                "cpu_backend": "triton",
-                "test_configs.runtime_triton_dtype_assert": False,
-                "test_configs.runtime_triton_shape_assert": False,
-            }
-        )(
-            skipOps(
-                {
-                    skip(op.name, op.variant_test_name or "", device_type="cpu")
+        test_comprehensive = test_torchinductor_opinfo.make_test_comprehensive(
+            "TestInductorOpInfoTriton",
+            [
+                next(
+                    op
                     for op in test_torchinductor_opinfo.op_db[
                         test_torchinductor_opinfo.START : test_torchinductor_opinfo.END
                     ]
-                    if op.full_name != "index_add"
+                    if op.full_name == "index_add"
+                )
+            ],
+            config.patch(
+                {
+                    "cpu_backend": "triton",
+                    "test_configs.runtime_triton_dtype_assert": False,
+                    "test_configs.runtime_triton_shape_assert": False,
                 }
-            )(test_torchinductor_opinfo.InductorOpInfoTemplate.test_comprehensive)
+            ),
         )
 
     instantiate_device_type_tests(
